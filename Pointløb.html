@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<title>Pointløb</title>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: linear-gradient(to right, #141e30, #243b55);
+    color: white;
+    text-align: center;
+    margin:0;
+}
+
+h1 { margin:20px 0 10px 0; }
+.controls { margin-bottom:35px; }
+
+button {
+    padding:8px 16px;
+    margin:5px;
+    border:none;
+    border-radius:6px;
+    cursor:pointer;
+    font-weight:bold;
+}
+
+.startBtn { background:#4CAF50; color:white; }
+.runBtn   { background:#2196F3; color:white; }
+.editBtn  { background:#ff9800; color:white; }
+
+.track {
+    position:relative;
+    width:94%;
+    height:75vh;
+    margin:40px auto 0 auto;
+    border-left:3px solid white;
+    border-right:3px solid white;
+}
+
+.runner {
+    position:absolute;
+    height:12px;
+    width:12px;
+    border-radius:50%;
+}
+
+.grade-line {
+    position:absolute;
+    top:0;
+    bottom:0;
+    width:2px;
+    background:rgba(255,255,255,0.6);
+    opacity:0;
+    transition:opacity 0.6s ease;
+}
+
+.grade-zone {
+    position:absolute;
+    top:0;
+    bottom:0;
+    background:rgba(255,255,255,0.05);
+    opacity:0;
+    transition:background 0.4s ease, opacity 0.6s ease;
+    pointer-events:none;
+}
+
+.grade-zone.running { opacity:1; }
+.grade-zone.active  { background:rgba(255,255,255,0.18); }
+
+.zone-label {
+    position:absolute;
+    top:50%;
+    transform:translate(-50%, -50%);
+    font-size:48px;
+    font-weight:bold;
+    opacity:0;
+    transition:opacity 0.6s ease;
+    pointer-events:none;
+}
+
+.zone-label.visible { opacity:0.12; }
+
+.panel {
+    position:absolute;
+    top:120px;
+    left:50%;
+    transform:translateX(-50%);
+    background:#1f2a40;
+    padding:20px;
+    border-radius:10px;
+    display:none;
+    z-index:10;
+}
+
+textarea {
+    width:350px;
+    height:200px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>Pointløb</h1>
+
+<div class="controls">
+<button class="startBtn" onclick="startRace()">Start (forfra)</button>
+<button class="runBtn" onclick="runNext()">Kør</button>
+<button class="editBtn" onclick="openPointsPanel()">Rediger elevpoint</button>
+<button class="editBtn" onclick="openGradesPanel()">Rediger grænser</button>
+</div>
+
+<div class="track" id="track"></div>
+
+<div class="panel" id="pointsPanel">
+<h3>Indsæt point</h3>
+<textarea id="pointsInput"></textarea><br>
+<button onclick="applyPoints()">OK</button>
+</div>
+
+<div class="panel" id="gradesPanel">
+<h3>Rediger grænser</h3>
+<textarea id="gradesInput"></textarea><br>
+<button onclick="applyGrades()">OK</button>
+</div>
+
+<script>
+
+let runnerWidth = 12;
+
+let grades = [
+    {label:"00", x:12},
+    {label:"02", x:66},
+    {label:"4", x:80},
+    {label:"7", x:112},
+    {label:"10", x:152},
+    {label:"12", x:180},
+    {label:"Maks", x:200}
+];
+
+let students = [
+15,33,39,42,44,44,61,62,71,78,84,
+91,92,94,102,122,124,130,142,143,145,165,168
+].map(s=>({score:s}));
+
+let maxPoints = 200;
+const track = document.getElementById("track");
+
+let gradeZones=[];
+let gradeLines=[];
+let currentZoneIndex=0;
+let animationRunning=false;
+let dynamicSpeed;
+let finishedAll=false;
+
+/* ---------- PANEL ---------- */
+
+function openPointsPanel(){
+    document.getElementById("pointsInput").value =
+        students.map(s=>s.score).join("\n");
+    document.getElementById("pointsPanel").style.display="block";
+}
+
+function openGradesPanel(){
+    document.getElementById("gradesInput").value =
+        grades.map(g=>g.label+","+g.x).join("\n");
+    document.getElementById("gradesPanel").style.display="block";
+}
+
+function applyPoints(){
+    const input=document.getElementById("pointsInput").value
+        .split(/\s+/)
+        .map(x=>parseInt(x))
+        .filter(x=>!isNaN(x)&&x>=0);
+
+    students=input.map(s=>({score:s}));
+    document.getElementById("pointsPanel").style.display="none";
+    startRace();
+}
+
+function applyGrades(){
+    const input=document.getElementById("gradesInput").value
+        .split("\n")
+        .map(line=>{
+            const p=line.split(",");
+            return {label:p[0],x:parseInt(p[1])};
+        })
+        .filter(g=>!isNaN(g.x));
+
+    grades=input;
+    document.getElementById("gradesPanel").style.display="none";
+    startRace();
+}
+
+/* ---------- CORE ---------- */
+
+function updateMaxPoints(){
+    const maxStudent = Math.max(...students.map(s=>s.score), 0);
+    const maxGrade   = Math.max(...grades.map(g=>g.x), 0);
+    maxPoints = Math.max(1, maxStudent, maxGrade);
+}
+
+function startRace(){
+
+    track.innerHTML="";
+    gradeZones=[];
+    gradeLines=[];
+    currentZoneIndex=0;
+    animationRunning=false;
+    finishedAll=false;
+
+    students.sort((a,b)=>a.score-b.score);
+
+    updateMaxPoints();
+
+    const rowHeight=track.clientHeight/students.length;
+
+    students.forEach((s,i)=>{
+        const r=document.createElement("div");
+        r.className="runner";
+        r.style.top=(i*rowHeight)+"px";
+        r.style.backgroundColor=`hsl(${Math.random()*360},70%,60%)`;
+        track.appendChild(r);
+        s.element=r;
+        s.position=0;
+    });
+
+    const extended=[{label:"-3",x:0},...grades];
+
+    for(let i=0;i<extended.length-1;i++){
+
+        const left=(extended[i].x/maxPoints)*(track.clientWidth-runnerWidth);
+        const right=(extended[i+1].x/maxPoints)*(track.clientWidth-runnerWidth);
+
+        const zone=document.createElement("div");
+        zone.className="grade-zone";
+        zone.style.left=left+"px";
+        zone.style.width=(right-left)+"px";
+
+        const label=document.createElement("div");
+        label.className="zone-label";
+        label.innerText=extended[i].label;
+        label.style.left=(left+(right-left)/2)+"px";
+
+        track.appendChild(zone);
+        track.appendChild(label);
+
+        gradeZones.push({zone,label});
+    }
+
+    grades.forEach(g=>{
+        const xPos=(g.x/maxPoints)*(track.clientWidth-runnerWidth);
+        const line=document.createElement("div");
+        line.className="grade-line";
+        line.style.left=xPos+"px";
+        track.appendChild(line);
+        gradeLines.push({threshold:g.x,line,revealed:false});
+    });
+
+    dynamicSpeed=maxPoints/600;
+}
+
+/* ---------- ANIMATION (FIXED) ---------- */
+
+function runNext(){
+
+    if(animationRunning) return;
+
+    if(finishedAll){
+        showEverythingNeutral();
+        return;
+    }
+
+    if(currentZoneIndex>=gradeZones.length){
+        showEverythingNeutral();
+        finishedAll=true;
+        return;
+    }
+
+    const zone=gradeZones[currentZoneIndex];
+    zone.zone.classList.add("running");
+    zone.label.classList.add("visible");
+
+    const threshold = currentZoneIndex < grades.length
+        ? grades[currentZoneIndex].x
+        : Math.max(...students.map(s=>s.score));
+
+    animationRunning=true;
+
+    let lastTime = null;
+
+    requestAnimationFrame(function animate(time){
+
+        if(!lastTime) lastTime = time;
+        const delta = (time - lastTime) / 16.67;
+        lastTime = time;
+
+        let leader=0;
+        let someoneMoving=false;
+
+        students.forEach(s=>{
+            if(s.position<s.score && s.position<threshold){
+                s.position += dynamicSpeed * delta;
+                someoneMoving=true;
+            }
+
+            if(s.position>leader) leader=s.position;
+
+            const x=(s.position/maxPoints)*(track.clientWidth-runnerWidth);
+            s.element.style.transform=`translateX(${x}px)`;
+        });
+
+        if(currentZoneIndex < gradeLines.length){
+            const g=gradeLines[currentZoneIndex];
+            if(!g.revealed && leader>=g.threshold){
+                g.line.style.opacity=1;
+                g.revealed=true;
+            }
+        }
+
+        if(leader>=threshold || !someoneMoving){
+
+            gradeZones.forEach(z=>z.zone.classList.remove("active"));
+            zone.zone.classList.add("active");
+
+            animationRunning=false;
+            currentZoneIndex++;
+
+            if(!someoneMoving){
+                finishedAll=true;
+            }
+
+            return;
+        }
+
+        requestAnimationFrame(animate);
+    });
+}
+
+/* ---------- END ---------- */
+
+function showEverythingNeutral(){
+    gradeZones.forEach(z=>{
+        z.zone.classList.add("running");
+        z.zone.classList.remove("active");
+        z.label.classList.add("visible");
+    });
+
+    gradeLines.forEach(l=>{
+        l.line.style.opacity=1;
+    });
+}
+
+startRace();
+
+</script>
+</body>
+</html>
